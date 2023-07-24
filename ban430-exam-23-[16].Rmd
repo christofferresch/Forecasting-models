@@ -1,0 +1,512 @@
+---
+title: "BAN430-Exam-2023"
+author: 'Candidate: 16'
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+```
+
+
+
+# Assignment 1
+
+## a) Stationarity
+For a time series to be stationary, it should look the same at any point in time, no trends or seasonality. However, cyclic behaviour is allowed for stationary time series.
+
+A: looks not stationary because it has an obvious trend of exponential decline. 
+
+B: looks not stationary because it has rather obvious seasonality. However, it is a bit hard to distinguish because the cycles could be periodic. Since we do not have any information on what kind of time series it is, I cannot with zero uncertainty say it is stationary. Therefore I would conclude that it is non stationary because of its seasonality.
+
+C: looks stationary
+
+D: looks not stationary because of obvious seasonality and trend. 
+
+E: looks stationary at first glance. However, it also looks as if it has some seasonality because of its two low points at approx dec 2014 and dec 2018. Perhaps this time series is affected by a 4-year happening or somethings. I would need more information on what the exact time series is about to address this further. I would anyway say that this is more of a periodic matter which tells us that it is not something we know that is going to happen - and therefore the time plot is stationary.
+
+F: Looks stationary because of no trend, seasonality or cyclic behaviour
+
+## b) Autocorrelation
+
+ACF plot 2 should belong to time plot A because the data has an obvoius trend which should make the autocorrelations for small lags large and positive and decrease over larger lags. 
+
+ACF plot 1 should belong to time plot C, because it is the clearest stationary time series and should therefore have "the best" ACF plot.
+
+ACF plot 6 should belong to time plot E, because it is stationry with some small resembelence of perhaps seasonality - could make the autocorrelations close to the limit.
+
+ACF plot 5 should belong to time plot D because of the obvious seasonality and trend which should make the ACF plot capture both. Slowly decrease in lags due to trend, and bump in shape due to seasonality.
+
+ACF plot 4 should belong to time plot B because of its seasonality, which can be seen in the ACF plot also.
+
+ACF plot 3 should belong to time plot F
+
+```{r include=FALSE}
+# libraries
+library(tidyverse) 
+library(fable)
+library(feasts)
+library(ggpubr)
+library(tsibble)
+library(ggplot2)
+library(fpp3)
+library(parallel)
+```
+
+
+
+
+# Assignment 2
+
+```{r echo=TRUE}
+
+# importing data
+house <- readRDS("attachments/houseprices.rds") 
+
+# looking at the data
+head(house)
+
+# plot the columns priceindex 
+house %>% autoplot(priceindex)
+```
+The time plot displays a time series that is increasing in a linear matter, with a dip in 2008 --> mainly beacuse of the financial crisis.
+
+
+## a) Identifying the components
+The definition of an additive decomposition is:
+
+$$
+\begin{equation}
+\tag{1.1}
+y_t = S_t + T_t + R_t
+\end{equation}
+$$
+The columns identified in terms of the components is as follows:
+y_t = priceindex and s_t = seasonally_adjusted
+
+
+## b) Creating a seasonally adjusted price index
+
+To create my own seasonally adjusted price index I am performing decomposition.
+
+```{r echo=TRUE}
+# decomposing using the STL method
+dcmp <- house %>% 
+  model(
+    classical = classical_decomposition(priceindex, type = "additive"),
+    stl = STL(priceindex),
+    x11 = X_13ARIMA_SEATS(priceindex ~ x11()),
+    seats = X_13ARIMA_SEATS(priceindex ~ seats())
+    )
+
+
+dcmp %>% select(x11) %>%  components()  %>% autoplot()
+```
+Above I have used a decomposition model: the x-11 method from official statistics agencies to calculate seasonally adjusted price index. After fitting classical, stl, x11 and seats decomposition models, I find all models except classical to be good enough. Each capture the decline in priceindex in 2008 well and the remainder is little. So for the purpose of this time series, and since we have quarterly data, I wanted to use a decomposition from official statistics agencies, and landed on the X-11 model.
+Further i am comparing it to the seasonally_adjusted price index from the dataframe.
+
+```{r echo=TRUE}
+dcmp %>% 
+  select(x11) %>% 
+  components() %>% 
+  as_tsibble() %>%
+  left_join(house, by = c("quarter")) %>%
+  select(quarter, season_adjust, seasonally_adjusted) %>%
+  ggplot() +
+  geom_line(aes(x = quarter, y=season_adjust), colour = "blue") +
+  geom_line(aes(x = quarter, y=seasonally_adjusted), colour = "black")
+```
+The figure above plots the seasonally_adjusted column provided in the data, and the season_adjust component extracted from the X-11 decomposition model. We can see that the values follows the same path and looks quite similar.
+
+
+
+## c) Where to sell, and where to buy
+A bit hard to interpret the question, since it is not clear if you are asking if I could choose one quarter through the entire time series, or if you are asking for a general quarter I would choose to buy/sell every year in the time series.
+
+When it comes to the first point, and there is no limits to how long I can have my house, I would definitely buy my house at the very beginning of the time series and sell at the very end of the time series.
+
+When it comes to the second point. I am making a subseries-plot to see how the time series are varying across quarters
+
+```{r echo=FALSE}
+# Making a subseries plot
+house %>% gg_subseries(priceindex)
+
+```
+The subseries plot motivates me to buy houses in the first quarter, and sell houses in the second quarter. This is when addressing the mean of priceindex (blue-line)
+
+```{r echo=FALSE}
+# season plot MAYBE DROP THIS
+house %>% gg_season(priceindex, labels = "both")
+```
+The season plot is hard to interpret and to use to answer the question. However we can see that in order to not loose value from when you buy our house and sell it, you have to own the house a couple of years. If we think of the take away from the subseries plot, buy in first quarter and sell in second quarter, we would loos value in some years, but if we keep our house through to the next year, we are pretty sure the value wont have decreased from the initial value when you bought the house. 
+
+
+# Assignmnet 3
+
+## a) Exploratory analysis
+
+I am importing the data, limiting to vessels transiting the canal going North, removing the transit_bound column for simplicity purposes, formatting the year-week column to yearweek and transforming to a tsibble with vessel_type as key and year_week as index.
+
+```{r echo=TRUE}
+# Reading in the data
+
+df <- readRDS("attachments/panamacanal.rds") %>% ungroup()
+
+# Filtering and formatting
+panama <- df %>%
+  filter(transit_bound == "North") %>%  # limiting to transit_bound North
+  select(-transit_bound) %>%            # Removing transit_bound column (do not need it anymore)
+  mutate(
+    year_week = yearweek(year_week)     # formatting to year_week
+  )   %>% 
+  as_tsibble(key = c("vessel_type"), index =  "year_week")
+
+```
+
+Further i am creating exploratory graphics and commenting on the plots
+```{r echo=FALSE}
+panama %>% 
+  ggplot() +
+  geom_line(aes(year_week, waiting_time, color = vessel_type)) +
+  facet_wrap(~vessel_type,
+             strip.position = "right",
+             ncol = 1, 
+             scales = "free_y") + theme(legend.position = "none")  
+```
+The plot above plots waiting time for all vessels in the period of analysis. It is very hard to distinguish any seasonality or trends here. The only take away from this plot, is perhaps the somewhat spike at 2020 W10 for the top four vessels.
+
+
+```{r echo=FALSE}
+panama %>%
+  fill_gaps() %>% 
+  gg_season(waiting_time)
+```
+The plot above plots the differen years of each vessel over the time horizong. There is impossible to see if there is any seasonality in the data here. One interesting thing to see is all the gaps in the data, especially for the "Oil tanker" vessel
+Based on the plots above, there is no evidence that there is any seasonality or trends in the data of waiting_time. 
+
+Further I will create a separate data object with only vessel type Bulk carrier
+```{r echo=TRUE}
+# creating sepearate dataset only containg Bulk carrier
+bulk <- panama %>% 
+  filter(vessel_type == "Bulk carrier")
+```
+
+```{r echo=FALSE, fig.height=2, fig.width=10}
+bulk %>% autoplot(waiting_time)
+```
+The figure above plots the waiting time. And we can see a spike in the data in 2020 week 10. Lets make a season plot to see if there is any interesting characteristics there.
+
+```{r echo=FALSE, fig.height=2, fig.width=10}
+bulk %>% gg_season(waiting_time, period = "years")
+```
+The season plot shows none relationships between years in the data.
+
+## b) Type of vessel analysis
+
+```{r echo=FALSE}
+panama %>% 
+  as_tibble() %>% 
+  ungroup() %>% 
+  group_by(vessel_type) %>%
+  summarise(
+    mean = mean(waiting_time),
+    max = max(waiting_time),
+    min = min(waiting_time),
+    st.dev = sd(waiting_time)
+    )
+```
+
+The table above calculates the mean, max, min and st.dev of waiting-time for all vessels.
+(1) The vessel with the shortest average waiting time, and therefore would be the most willing to pay for fast_track is vessels of type "Container".
+(2) The vessel with the highest variation in waiting times, measured by standard deviation, is vessels of type "Oil Tanker".
+
+
+## Further analysis of only Bulk data
+
+```{r include=FALSE}
+# Splitting into train and test set
+test <- bulk %>% 
+  filter(year_week >= yearweek("2021 W36"))
+
+train <- bulk %>% 
+  filter(year_week < yearweek("2021 W36"))
+
+```
+
+
+
+## c) Unitroot test
+
+The most obvious argument for using log-transform is that it ensures that we have values, in all steps of the forecasting, on the same scale and inside equal limits/parameters. It ensures that we do not get negative values when forecasting while being easy to interpret. 
+
+In this task, we are considering to model log(waiting time) as and ARIMA(p,d,0) or ARIMA(0,d,q). I shall therefore determine d using a unitroot test.
+
+Firstly I am utlizing unitroot_ndiffs() which uses a sequence of KPSS test to determine the appropate d. The utilization results in a d of 1.
+
+```{r echo=FALSE}
+bulk %>% 
+  features(log(waiting_time), unitroot_ndiffs)
+```
+
+
+Secondly I am utlizing unitroot_nsdiffs() which uses the measure of seasonal strength to determine the appropriate d. The utilization results in a d of 0.
+```{r echo=FALSE}
+bulk %>% 
+  features(log(waiting_time), unitroot_nsdiffs)
+```
+
+## d) Determining p and q
+To determine p and q from the ACF and PACF plots, the data has to be from an ARIMA(p,d,0) or ARIMA(0,d,q) model,which is assumed in the task description on the beginning of page 7.
+Based on the ACF plot, I am seeing characteristics of a decaying sinusoidal pattern even though it is decaying slowly, with the last significant spike at lag 10.
+The PACF plot shows that the last significant spike was at lag 6
+Based on this, I would suggest p = 6 and q = 10.
+
+
+## e) Fitting an ARIMA model (auto)
+```{r fig.height=4, echo=TRUE, fig.width=10}
+fit <- train %>% 
+  model(ARIMA(log(waiting_time)))
+fit %>% 
+  gg_tsresiduals()
+#report(fit)
+```
+The above plot show the residuals of the fitted ARIMA model with automatic procedures.
+The ACF shows a single significant spike in lag, which is not enough to disregard this as white noise.
+
+## f) ARIMA auto report
+```{r echo=FALSE}
+report(fit)
+```
+Above is the report of the model in (e) printed It gives us an ARIMA(1,1,1) model and the following equations:
+
+$$
+\begin{equation}
+\tag{1.2}
+y_t = log(waiting.time) 
+\end{equation}
+$$
+$$
+\begin{equation}
+\tag{1.3}
+(1-B)^2y_t = (1+\theta B )\epsilon_t
+\end{equation}
+$$
+$$
+\begin{equation}
+\tag{1.4}
+where \space N(0,\sigma^2),\theta=-0.94 \space and \space \sigma^2 = 0.11
+\end{equation}
+$$
+
+
+
+## g) Difference between forward and backward stepwise model selection
+
+```{r echo=FALSE}
+# Stepwise model selection, provided by task description
+
+# specifying the model with all potential predictors:
+full.mod <- lm(log(waiting_time) ~ 
+                 log(waiting_time_lag_1) +
+                 log(sog_lag_1) +
+                 log(gatun_level_mt_lag_1) +
+                 log(transits_lag_1) + 
+                 log(visibility_culebra_lag_1) +
+                 log(visibility_corozal_lag_1) +
+                 log(visibility_gatun_lag_1) +
+                 log(visibility_limon_lag_1),
+               data = train)
+forward <- MASS::stepAIC(full.mod, direction = "forward", trace = F)
+backward <- MASS::stepAIC(full.mod, direction = "backward", trace = F)
+AIC(forward, backward) # compare AIC
+```
+The backwards stepwise regression works in the following way: firstly it takes the model containing all potential predictors and the remove one predictor at a time. It keeps the model if it improves the measure of accuracy, in our example AIC.
+However, if the number of potential predictors is too large, the backward regression will not work and the forward regression should be used instead.
+The forward stepwise regression starts from the other side, compared to the backwards regression. It begins with a model only containing the intercept, and add predictors one at a time. And again, the one the improves accuracy (AIC in our case) the most, is kept in the model.
+The reason to why these not necessarily gives the same model specification is because they "go" from each different end of the number of potential predictors. That makes each method to combine predictors differently. Based on the AIC in our example, the backward stepwise regression would be the best. 
+
+# h) Innovation residuals (come back)
+
+```{r fig.height=2, fig.width=10, echo=FALSE}
+fit2 <- train %>% 
+  model(
+    backward = TSLM(log(waiting_time) ~ 
+                      log(waiting_time_lag_1) +
+                      log(transits_lag_1) +
+                      log(visibility_gatun_lag_1) +
+                      log(visibility_limon_lag_1)
+                      ))
+augment(fit2) %>% autoplot(.innov)
+```
+The innovation residuals looks like white noise
+
+Comparing model performance of the backward stepwise model selection and the ARIMA model from (e)
+
+```{r echo=FALSE}
+fit_comp <- train %>% 
+  model(
+    backward = TSLM(log(waiting_time) ~ 
+                      log(waiting_time_lag_1) +
+                      log(transits_lag_1) +
+                      log(visibility_gatun_lag_1) +
+                      log(visibility_limon_lag_1)
+                      ),
+    arima = ARIMA(log(waiting_time))
+  )
+  
+  glance(fit_comp) %>%  arrange(AICc) %>%  select(.model:BIC)
+```
+In terms of AIC the backwards model perform much better
+
+## i) Forecasting
+Forecasting the backwards stepwise model and plotting the forecast with the observed values.
+```{r fig.height=4, fig.width=10, echo=TRUE}
+fit2 %>% 
+  forecast(test) %>% 
+  autoplot(bulk)
+```
+This is an ex-ante forecast since we are only using the data we have in the train set to build the model and forecast. Data up until week 35, 2021. Therefore, we have forecasts of the predictors. If we on the contrary would observe and use later information on the predictors it would be an ex-post forecast. 
+
+## j) Fitting automatic ARIMA model to each vessel type to replace missing values
+
+In the code below I am filling gaps in the data with NAs. Then, I use an automatic ARIMA model to estimate the missing values, and insert them into the data with interpolate(). Lastly, I split into train and test set.
+```{r fig.height=8, fig.width=10, echo=TRUE}
+# filling in missing values
+panama_miss <- panama %>%
+  fill_gaps()
+
+# check in which columns the missing values are
+# t <- panama_miss  %>%  summarise(across(everything(), ~ sum(is.na(.)))) 
+# colSums(t[,-1])
+# there are missing values in every column
+
+# start cluster
+cores <- detectCores()
+cluster <- makeCluster(cores)
+
+# fitting ARIMA for every column and interpotlating
+wait <- panama_miss %>%
+  group_by(vessel_type) %>%
+  model(ARIMA(log(waiting_time))) %>%
+  interpolate(panama_miss)
+
+trans <- panama_miss %>%
+  group_by(vessel_type) %>%
+  model(ARIMA(log(transits_lag_1))) %>%
+  interpolate(panama_miss) %>% 
+  suppressWarnings()
+
+sog <- panama_miss %>%
+  group_by(vessel_type) %>%
+  model(ARIMA(log(sog_lag_1))) %>%
+  interpolate(panama_miss)
+
+gatun_level <- panama_miss %>%
+  group_by(vessel_type) %>%
+  model(ARIMA(log(gatun_level_mt_lag_1))) %>%
+  interpolate(panama_miss)
+
+culebra <- panama_miss %>%
+  group_by(vessel_type) %>%
+  model(ARIMA(log(visibility_culebra_lag_1))) %>%
+  interpolate(panama_miss) %>% 
+  suppressWarnings()
+
+limon <- panama_miss %>%
+  group_by(vessel_type) %>%
+  model(ARIMA(log(visibility_limon_lag_1))) %>%
+  interpolate(panama_miss) %>% 
+  suppressWarnings()
+
+corozal <- panama_miss %>%
+  group_by(vessel_type) %>%
+  model(ARIMA(log(visibility_corozal_lag_1))) %>%
+  interpolate(panama_miss) %>% 
+  suppressWarnings()
+
+gatun <- panama_miss %>%
+  group_by(vessel_type) %>%
+  model(ARIMA(log(visibility_gatun_lag_1))) %>%
+  interpolate(panama_miss)
+
+wait_lag <- panama_miss %>%
+  group_by(vessel_type) %>%
+  model(ARIMA(log(waiting_time_lag_1))) %>%
+  interpolate(panama_miss)
+
+panama_fill <- wait %>% 
+  left_join(trans,by = c("vessel_type", "year_week"))%>% 
+  left_join(sog,by = c("vessel_type", "year_week"))%>% 
+  left_join(gatun_level,by = c("vessel_type", "year_week"))%>% 
+  left_join(culebra,by = c("vessel_type", "year_week"))%>% 
+  left_join(limon,by = c("vessel_type", "year_week"))%>% 
+  left_join(corozal,by = c("vessel_type", "year_week"))%>% 
+  left_join(gatun,by = c("vessel_type", "year_week"))%>% 
+  left_join(wait_lag,by = c("vessel_type", "year_week"))
+
+#t <- panama_fill  %>%  summarise(across(everything(), ~ sum(is.na(.)))) 
+#colSums(t[,-1])
+# zero nas
+
+# close cluster
+stopCluster(cluster)
+
+# making train and test set
+test2 <- panama_fill %>% 
+  filter(year_week >= yearweek("2021 W36"))
+
+train2 <- panama_fill %>% 
+  filter(year_week < yearweek("2021 W36"))
+
+# short look at the data
+panama_fill %>% 
+  gg_season(waiting_time)
+
+```
+We can see now that the data is filled. Compared to the season plot in task 3a)
+
+## k) Fitting model to training set including all vessels
+
+```{r echo=TRUE}
+models <- train2 %>%  
+  model(
+  arima = ARIMA(log(waiting_time)),
+  backward = TSLM(log(waiting_time) ~ 
+                      log(waiting_time_lag_1) +
+                      log(transits_lag_1) +
+                      log(visibility_gatun_lag_1) +
+                      log(visibility_limon_lag_1)
+                      ),
+  naive = NAIVE(waiting_time),
+  drift = NAIVE(waiting_time ~ drift())
+) %>%
+  mutate(
+    comb_non_benchmark = (arima + backward) / 2,
+    comb_all = (arima + backward + naive + drift) / 4
+  )
+
+fc <- models %>% 
+  forecast(new_data = test2)
+
+options(dplyr.summarise.inform = FALSE)
+
+accuracy(fc, test2) %>%
+    as_tibble() %>% 
+  group_by(vessel_type, .model) %>%
+  summarise(
+    RMSE = min(RMSE)
+  ) %>%
+  filter(RMSE == min(RMSE))
+
+```
+The table above lists which model that is the best for which vessel type.
+
+
+
+
+
+
+
+
